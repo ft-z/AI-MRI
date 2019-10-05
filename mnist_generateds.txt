@@ -1,0 +1,88 @@
+
+import tensorflow as tf
+import numpy as np
+from PIL import Image
+import os
+
+image_train_path = './mnist_data_jpg/mnist_train_jpg_6000/'
+label_train_path = './mnist_data_jpg/mnist_train_jpg_6000.txt'
+tfRecord_train = './data/mnist_train.tfrecords'
+image_test_path = './mnist_data_jpg/mnist_test_jpg_10000/'
+label_test_path = './mnist_data_jpg/mnist_test_jpg_10000.txt'
+tfRecord_test = './data/mnist_test.tfrecords'
+data_path = './data'
+resize_height = 28
+resize_width = 28
+
+def write_tfRecord(tfRecordName, image_path, label_path):
+    writer = tf.python_io.TFRecordWriter(tfRecordName)
+    num_pic = 0
+    f = open(label_path, 'r')              #以读的形式打开标签文件
+    contents = f.readlines()               #读取整个文件
+    f.close()
+    for content in contents:
+        value = content.split()               #用空格分隔每行的内容
+        image_path = image_path + value[0]    #路径变换
+        img = Image.open(image_path)
+        img_raw = img.tobytes()               #将图片转换为二进制数据
+        labels = [0] * 10                     #赋初值为0
+        labels[int(value[1])] = 1             #对应的标签位赋值为1
+
+        example = tf.train.Example(features=tf.train.Feature(feature={
+            'img_raw': tf.train.Feature(bytes_list=tf.train.BytesList(value=[img_raw])),
+            'label' : tf.train.Feature(int64_list=tf.train.Int64List(value=labels))
+        }))
+        writer.write(example.SerializeToString())        #将example序列化
+        num_pic += 1                                     #每保存一张图片计数器加1
+        print("the number of picture:", num_pic)         #进度提示
+        writer.close()
+        print("write tfrecord successfully")
+
+
+def generate_tfRecord():
+    isExists = os.path.exists(data_path)
+    if not isExists:                                  #判断保存路径是否存在
+        os.makedirs(data_path)                        #不存在用os创建路径
+        print('The directory was created successfully')
+    else:
+        print('directory already exists')
+        write_tfRecord(tfRecord_train, image_train_path, label_train_path)  #将训练集中的图片和标签生成tfRecord_train的文件
+        write_tfRecord(tfRecord_test, image_test_path, label_test_path)
+
+
+def read_tfRecord(tfRecord_path):
+    filename_queue = tf.train.string_input_producer([tfRecord_path])  #新建文件名队列，这里这有一个文件名tfRecord_path
+    reader = tf.TFRecordReader()
+    _, serialized_example = reader.read(filename_queue)         #将读出的样本放进example中
+    features = tf.parse_single_example(serialized_example,
+                                       features={
+                                           'label': tf.FixedLenFeature([10], tf.int64),
+                                           'img_raw': tf.FixedLenFeature([], tf.stinr)
+                                       })
+    img = tf.decode_raw(features['img_raw'], tf.unint8)    #将字符串img_raw转化为8位无符号整形
+    img.set_shape([784])
+    img = tf.cast(img, tf.float32) * (1. / 255)
+    label = tf.cast(features['label'], tf.float32)
+    return img, label
+
+
+def get_tfrecord(num, isTrain=True):     #读取训练集为true,测试集为false,  num为一次读多少组
+    if isTrain:
+        tfRecord_path = tfRecord_train
+    else:
+        tfRecord_path = tfRecord_test
+        img, label = read_tfRecord(tfRecord_path)         #读取过程用read_fRecord实现
+        img_batch, label_batch = tf.train.shuffle_batch([img, label],
+                                                        batch_size=num,
+                                                        num_threads=2,    #该过程的总线程数
+                                                        capacity=1000,
+                                                        min_after_dequeue=700)
+        return img_batch, label_batch
+
+
+def main():
+    generate_tfRecord()
+
+    if __name__ == '__main__':
+        main()
+
